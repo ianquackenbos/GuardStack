@@ -1,0 +1,92 @@
+{{- if .Values.security.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "guardstack.fullname" . }}
+  labels:
+    {{- include "guardstack.labels" . | nindent 4 }}
+rules:
+  # Allow reading secrets for API keys
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+    resourceNames:
+      - {{ include "guardstack.fullname" . }}-secrets
+      {{- if .Values.connectors.openai.apiKeySecret }}
+      - {{ .Values.connectors.openai.apiKeySecret }}
+      {{- end }}
+      {{- if .Values.connectors.anthropic.apiKeySecret }}
+      - {{ .Values.connectors.anthropic.apiKeySecret }}
+      {{- end }}
+  
+  # Allow reading configmaps
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+    resourceNames:
+      - {{ include "guardstack.fullname" . }}-config
+  
+  # Allow creating/managing jobs for evaluations
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  
+  # Allow reading pods for job status
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  
+  # Allow reading pod logs
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "guardstack.fullname" . }}
+  labels:
+    {{- include "guardstack.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "guardstack.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "guardstack.fullname" . }}
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}
+---
+{{- if and .Values.security.rbac.create .Values.argoWorkflows.enabled }}
+# Additional RBAC for Argo Workflows integration
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "guardstack.fullname" . }}-workflows
+  labels:
+    {{- include "guardstack.labels" . | nindent 4 }}
+rules:
+  # Argo Workflows management
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflows", "workflowtemplates", "cronworkflows"]
+    verbs: ["create", "delete", "get", "list", "watch", "update", "patch"]
+  
+  - apiGroups: ["argoproj.io"]
+    resources: ["workflows/finalizers"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "guardstack.fullname" . }}-workflows
+  labels:
+    {{- include "guardstack.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "guardstack.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ include "guardstack.fullname" . }}-workflows
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

@@ -1,0 +1,409 @@
+# GuardStack Helm Chart Values
+# Default configuration for the GuardStack AI Safety Platform
+
+# -- Global settings
+global:
+  # -- Image pull secrets for private registries
+  imagePullSecrets: []
+  # -- Storage class for persistent volumes
+  storageClass: ""
+
+# -- Replica count for the main API server
+replicaCount: 3
+
+# -- Image configuration
+image:
+  repository: guardstack/guardstack
+  pullPolicy: IfNotPresent
+  tag: ""  # Defaults to Chart.appVersion
+
+# -- Image pull secrets
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# -- Service account configuration
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# -- Pod annotations
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8000"
+  prometheus.io/path: "/metrics"
+
+# -- Pod security context
+podSecurityContext:
+  fsGroup: 1000
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# -- Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# -- Service configuration
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+  annotations: {}
+
+# -- Ingress configuration
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: guardstack.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: guardstack-tls
+  #    hosts:
+  #      - guardstack.local
+
+# -- Resource limits and requests
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+# -- Autoscaling configuration
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# -- Node selector
+nodeSelector: {}
+
+# -- Tolerations
+tolerations: []
+
+# -- Affinity rules
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - guardstack
+          topologyKey: kubernetes.io/hostname
+
+# -- GuardStack API Configuration
+api:
+  # -- API base path
+  basePath: /api/v1
+  # -- Enable debug mode
+  debug: false
+  # -- Log level (DEBUG, INFO, WARNING, ERROR)
+  logLevel: INFO
+  # -- CORS allowed origins
+  corsOrigins:
+    - "*"
+  # -- JWT secret (auto-generated if not provided)
+  jwtSecret: ""
+  # -- API rate limiting
+  rateLimit:
+    enabled: true
+    requestsPerMinute: 1000
+
+# -- Worker configuration for async tasks
+worker:
+  enabled: true
+  replicaCount: 2
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 8Gi
+    requests:
+      cpu: 500m
+      memory: 2Gi
+  # -- Concurrency settings
+  concurrency: 4
+
+# -- Evaluation configuration
+evaluation:
+  # -- Enable GPU support for evaluations
+  gpuEnabled: false
+  # -- Default timeout for evaluations (seconds)
+  timeout: 3600
+  # -- Maximum concurrent evaluations
+  maxConcurrent: 10
+
+# -- Gen AI Pillar Configuration
+genai:
+  enabled: true
+  pillars:
+    privacy:
+      enabled: true
+      # -- PII detection confidence threshold
+      confidenceThreshold: 0.8
+    toxicity:
+      enabled: true
+      # -- Toxicity score threshold
+      threshold: 0.7
+    fairness:
+      enabled: true
+    security:
+      enabled: true
+      # -- Garak probe configurations
+      garakProbes:
+        - prompt_injection
+        - jailbreak
+
+# -- Predictive AI Pillar Configuration
+predictive:
+  enabled: true
+  pillars:
+    explain:
+      enabled: true
+      # -- SHAP explainer type (kernel, tree, deep)
+      shapExplainer: kernel
+      # -- Number of samples for SHAP
+      shapSamples: 100
+    actions:
+      enabled: true
+    fairness:
+      enabled: true
+      # -- Protected attributes to evaluate
+      protectedAttributes: []
+    robustness:
+      enabled: true
+      # -- Attack types to evaluate
+      attacks:
+        - fgsm
+        - pgd
+    trace:
+      enabled: true
+    testing:
+      enabled: true
+    imitation:
+      enabled: true
+    privacy:
+      enabled: true
+
+# -- SPM (Security Posture Management) Configuration
+spm:
+  enabled: true
+  # -- Scan interval (cron expression)
+  scanInterval: "0 */6 * * *"
+  # -- Enable continuous scanning
+  continuous: false
+
+# -- Agentic Security Configuration
+agentic:
+  enabled: true
+  # -- MCP interceptor settings
+  interceptor:
+    enabled: true
+    defaultAction: audit
+  # -- Sandbox configuration
+  sandbox:
+    enabled: true
+    memoryLimitMb: 512
+    cpuLimit: 1.0
+    timeoutSeconds: 60
+
+# -- PostgreSQL Configuration
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: ""  # Auto-generated if not provided
+    username: guardstack
+    password: ""  # Auto-generated if not provided
+    database: guardstack
+  primary:
+    persistence:
+      enabled: true
+      size: 50Gi
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+      requests:
+        cpu: 500m
+        memory: 1Gi
+    # -- Enable pgvector extension
+    initdb:
+      scripts:
+        init-pgvector.sql: |
+          CREATE EXTENSION IF NOT EXISTS vector;
+          CREATE EXTENSION IF NOT EXISTS pg_trgm;
+  # -- Connection pool settings
+  pgbouncer:
+    enabled: true
+    poolSize: 20
+
+# -- Redis Configuration
+redis:
+  enabled: true
+  architecture: replication
+  auth:
+    enabled: true
+    password: ""  # Auto-generated if not provided
+  master:
+    persistence:
+      enabled: true
+      size: 10Gi
+    resources:
+      limits:
+        cpu: 500m
+        memory: 1Gi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+  replica:
+    replicaCount: 2
+    persistence:
+      enabled: true
+      size: 10Gi
+
+# -- MinIO Configuration (S3-compatible storage)
+minio:
+  enabled: true
+  auth:
+    rootUser: guardstack
+    rootPassword: ""  # Auto-generated if not provided
+  persistence:
+    enabled: true
+    size: 100Gi
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  # -- Default buckets to create
+  defaultBuckets: "models,artifacts,evaluations,reports"
+
+# -- Argo Workflows Configuration
+argoWorkflows:
+  enabled: true
+  controller:
+    replicas: 1
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  server:
+    enabled: true
+    replicas: 1
+
+# -- Monitoring and Observability
+monitoring:
+  # -- Enable Prometheus metrics
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+      interval: 30s
+  # -- Enable OpenTelemetry tracing
+  opentelemetry:
+    enabled: false
+    endpoint: ""
+    serviceName: guardstack
+  # -- Enable structured logging
+  logging:
+    format: json
+    level: INFO
+
+# -- Network Policies
+networkPolicy:
+  enabled: true
+  # -- Allow ingress from these namespaces
+  allowedNamespaces: []
+  # -- Additional ingress rules
+  additionalIngress: []
+  # -- Additional egress rules
+  additionalEgress: []
+
+# -- Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+  # maxUnavailable: 1
+
+# -- Rancher UI Extension
+rancherExtension:
+  enabled: true
+  # -- Extension version
+  version: "0.1.0"
+  # -- Navigation entry
+  navigation:
+    # -- Menu location (cluster, global)
+    location: cluster
+    # -- Menu icon
+    icon: shield-check
+
+# -- LLM Connectors Configuration
+connectors:
+  openai:
+    enabled: true
+    apiKeySecret: ""  # Secret name containing API key
+  anthropic:
+    enabled: true
+    apiKeySecret: ""
+  ollama:
+    enabled: false
+    endpoint: "http://ollama:11434"
+  huggingface:
+    enabled: false
+    apiKeySecret: ""
+  # -- LiteLLM proxy
+  litellm:
+    enabled: false
+    endpoint: ""
+
+# -- Security Settings
+security:
+  # -- Enable RBAC
+  rbac:
+    create: true
+  # -- Network policies
+  networkPolicies:
+    enabled: true
+  # -- Pod security standards
+  podSecurityStandards:
+    enforce: restricted
+  # -- Secret encryption
+  encryption:
+    enabled: true
+    provider: ""  # aws-kms, vault, age
+
+# -- Backup Configuration
+backup:
+  enabled: false
+  schedule: "0 2 * * *"
+  retention: 7
+  # -- S3 backup destination
+  s3:
+    bucket: ""
+    endpoint: ""
+    region: ""

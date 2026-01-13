@@ -1,0 +1,137 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "guardstack.fullname" . }}-api
+  labels:
+    {{- include "guardstack.api.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "guardstack.api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "guardstack.api.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "guardstack.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: api
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ include "guardstack.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - "python"
+            - "-m"
+            - "uvicorn"
+            - "guardstack.main:app"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: GUARDSTACK_ENV
+              value: {{ .Values.api.debug | ternary "development" "production" }}
+            - name: GUARDSTACK_LOG_LEVEL
+              value: {{ .Values.api.logLevel }}
+            - name: GUARDSTACK_API_BASE_PATH
+              value: {{ .Values.api.basePath }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "guardstack.fullname" . }}-secrets
+                  key: postgresql-password
+            - name: GUARDSTACK_DATABASE_URL
+              value: {{ include "guardstack.postgresql.connectionString" . }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "guardstack.fullname" . }}-secrets
+                  key: redis-password
+            - name: GUARDSTACK_REDIS_URL
+              value: {{ include "guardstack.redis.connectionString" . }}
+            - name: GUARDSTACK_S3_ENDPOINT
+              value: {{ include "guardstack.minio.endpoint" . }}
+            - name: GUARDSTACK_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "guardstack.fullname" . }}-secrets
+                  key: jwt-secret
+            {{- if .Values.connectors.openai.enabled }}
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.connectors.openai.apiKeySecret | default (printf "%s-openai" (include "guardstack.fullname" .)) }}
+                  key: api-key
+                  optional: true
+            {{- end }}
+            {{- if .Values.connectors.anthropic.enabled }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.connectors.anthropic.apiKeySecret | default (printf "%s-anthropic" (include "guardstack.fullname" .)) }}
+                  key: api-key
+                  optional: true
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "guardstack.fullname" . }}-config
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /home/guardstack/.cache
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

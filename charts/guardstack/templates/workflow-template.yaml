@@ -1,0 +1,315 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: guardstack-evaluation
+  labels:
+    app.kubernetes.io/name: guardstack
+    app.kubernetes.io/component: workflow
+spec:
+  entrypoint: evaluate-model
+  serviceAccountName: guardstack
+  
+  arguments:
+    parameters:
+      - name: model-id
+        description: "Model identifier to evaluate"
+      - name: evaluation-type
+        description: "Type of evaluation (predictive, genai, agentic)"
+        default: "predictive"
+      - name: pillars
+        description: "Comma-separated list of pillars to run"
+        default: "all"
+      - name: dataset-uri
+        description: "S3 URI to evaluation dataset"
+        default: ""
+      - name: config
+        description: "JSON configuration for evaluation"
+        default: "{}"
+  
+  volumes:
+    - name: cache
+      emptyDir:
+        sizeLimit: 10Gi
+    - name: tmp
+      emptyDir: {}
+  
+  templates:
+    # Main evaluation DAG
+    - name: evaluate-model
+      dag:
+        tasks:
+          - name: setup
+            template: setup-evaluation
+            arguments:
+              parameters:
+                - name: model-id
+                  value: "{{workflow.parameters.model-id}}"
+                - name: evaluation-type
+                  value: "{{workflow.parameters.evaluation-type}}"
+          
+          - name: load-model
+            template: load-model
+            dependencies: [setup]
+            arguments:
+              parameters:
+                - name: model-id
+                  value: "{{workflow.parameters.model-id}}"
+          
+          - name: load-dataset
+            template: load-dataset
+            dependencies: [setup]
+            when: "{{workflow.parameters.dataset-uri}} != ''"
+            arguments:
+              parameters:
+                - name: dataset-uri
+                  value: "{{workflow.parameters.dataset-uri}}"
+          
+          - name: run-pillars
+            template: pillar-runner
+            dependencies: [load-model, load-dataset]
+            arguments:
+              parameters:
+                - name: model-id
+                  value: "{{workflow.parameters.model-id}}"
+                - name: evaluation-type
+                  value: "{{workflow.parameters.evaluation-type}}"
+                - name: pillars
+                  value: "{{workflow.parameters.pillars}}"
+                - name: config
+                  value: "{{workflow.parameters.config}}"
+          
+          - name: aggregate
+            template: aggregate-results
+            dependencies: [run-pillars]
+            arguments:
+              parameters:
+                - name: model-id
+                  value: "{{workflow.parameters.model-id}}"
+          
+          - name: generate-report
+            template: generate-report
+            dependencies: [aggregate]
+            arguments:
+              parameters:
+                - name: model-id
+                  value: "{{workflow.parameters.model-id}}"
+    
+    # Setup evaluation environment
+    - name: setup-evaluation
+      inputs:
+        parameters:
+          - name: model-id
+          - name: evaluation-type
+      container:
+        image: guardstack/guardstack:{{workflow.parameters.image-tag}}
+        command: [python, -m, guardstack.workflows.setup]
+        args:
+          - "--model-id={{inputs.parameters.model-id}}"
+          - "--evaluation-type={{inputs.parameters.evaluation-type}}"
+        envFrom:
+          - configMapRef:
+              name: guardstack-config
+          - secretRef:
+              name: guardstack-secrets
+        volumeMounts:
+          - name: cache
+            mountPath: /cache
+          - name: tmp
+            mountPath: /tmp
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+    
+    # Load model from storage
+    - name: load-model
+      inputs:
+        parameters:
+          - name: model-id
+      outputs:
+        artifacts:
+          - name: model
+            path: /model
+            s3:
+              key: "workflows/{{workflow.name}}/model"
+      container:
+        image: guardstack/guardstack:{{workflow.parameters.image-tag}}
+        command: [python, -m, guardstack.workflows.load_model]
+        args:
+          - "--model-id={{inputs.parameters.model-id}}"
+          - "--output=/model"
+        envFrom:
+          - configMapRef:
+              name: guardstack-config
+          - secretRef:
+              name: guardstack-secrets
+        volumeMounts:
+          - name: cache
+            mountPath: /cache
+          - name: tmp
+            mountPath: /tmp
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "2Gi"
+          limits:
+            cpu: "2000m"
+            memory: "8Gi"
+    
+    # Load dataset from storage
+    - name: load-dataset
+      inputs:
+        parameters:
+          - name: dataset-uri
+      outputs:
+        artifacts:
+          - name: dataset
+            path: /dataset
+            s3:
+              key: "workflows/{{workflow.name}}/dataset"
+      container:
+        image: guardstack/guardstack:{{workflow.parameters.image-tag}}
+        command: [python, -m, guardstack.workflows.load_dataset]
+        args:
+          - "--uri={{inputs.parameters.dataset-uri}}"
+          - "--output=/dataset"
+        envFrom:
+          - configMapRef:
+              name: guardstack-config
+          - secretRef:
+              name: guardstack-secrets
+        volumeMounts:
+          - name: cache
+            mountPath: /cache
+          - name: tmp
+            mountPath: /tmp
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1000m"
+            memory: "4Gi"
+    
+    # Run evaluation pillars
+    - name: pillar-runner
+      inputs:
+        parameters:
+          - name: model-id
+          - name: evaluation-type
+          - name: pillars
+          - name: config
+      outputs:
+        artifacts:
+          - name: results
+            path: /results
+            s3:
+              key: "workflows/{{workflow.name}}/pillar-results"
+      container:
+        image: guardstack/guardstack:{{workflow.parameters.image-tag}}
+        command: [python, -m, guardstack.workflows.run_pillars]
+        args:
+          - "--model-id={{inputs.parameters.model-id}}"
+          - "--evaluation-type={{inputs.parameters.evaluation-type}}"
+          - "--pillars={{inputs.parameters.pillars}}"
+          - "--config={{inputs.parameters.config}}"
+          - "--output=/results"
+        envFrom:
+          - configMapRef:
+              name: guardstack-config
+          - secretRef:
+              name: guardstack-secrets
+        volumeMounts:
+          - name: cache
+            mountPath: /cache
+          - name: tmp
+            mountPath: /tmp
+        resources:
+          requests:
+            cpu: "2000m"
+            memory: "8Gi"
+          limits:
+            cpu: "4000m"
+            memory: "16Gi"
+    
+    # Aggregate pillar results
+    - name: aggregate-results
+      inputs:
+        parameters:
+          - name: model-id
+        artifacts:
+          - name: pillar-results
+            path: /pillar-results
+            s3:
+              key: "workflows/{{workflow.name}}/pillar-results"
+      outputs:
+        artifacts:
+          - name: aggregated
+            path: /aggregated
+            s3:
+              key: "workflows/{{workflow.name}}/aggregated"
+      container:
+        image: guardstack/guardstack:{{workflow.parameters.image-tag}}
+        command: [python, -m, guardstack.workflows.aggregate]
+        args:
+          - "--model-id={{inputs.parameters.model-id}}"
+          - "--input=/pillar-results"
+          - "--output=/aggregated"
+        envFrom:
+          - configMapRef:
+              name: guardstack-config
+          - secretRef:
+              name: guardstack-secrets
+        volumeMounts:
+          - name: tmp
+            mountPath: /tmp
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+    
+    # Generate evaluation report
+    - name: generate-report
+      inputs:
+        parameters:
+          - name: model-id
+        artifacts:
+          - name: aggregated
+            path: /aggregated
+            s3:
+              key: "workflows/{{workflow.name}}/aggregated"
+      outputs:
+        artifacts:
+          - name: report
+            path: /report
+            s3:
+              key: "evaluations/{{inputs.parameters.model-id}}/{{workflow.name}}/report"
+      container:
+        image: guardstack/guardstack:{{workflow.parameters.image-tag}}
+        command: [python, -m, guardstack.workflows.report]
+        args:
+          - "--model-id={{inputs.parameters.model-id}}"
+          - "--input=/aggregated"
+          - "--output=/report"
+          - "--format=html,json,pdf"
+        envFrom:
+          - configMapRef:
+              name: guardstack-config
+          - secretRef:
+              name: guardstack-secrets
+        volumeMounts:
+          - name: tmp
+            mountPath: /tmp
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"

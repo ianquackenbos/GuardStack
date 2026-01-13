@@ -1,0 +1,179 @@
+version: '3.8'
+
+services:
+  # GuardStack API
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: guardstack-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://guardstack:guardstack@postgres:5432/guardstack
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minio
+      - MINIO_SECRET_KEY=minio123
+      - SECRET_KEY=dev-secret-key-change-in-production
+      - LOG_LEVEL=INFO
+      - WORKERS=4
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    networks:
+      - guardstack-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # GuardStack Worker
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: guardstack-worker
+    command: ["python", "-m", "celery", "-A", "guardstack.worker", "worker", "-l", "info", "-c", "4"]
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://guardstack:guardstack@postgres:5432/guardstack
+      - REDIS_URL=redis://redis:6379/0
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minio
+      - MINIO_SECRET_KEY=minio123
+      - SECRET_KEY=dev-secret-key-change-in-production
+    depends_on:
+      - api
+      - postgres
+      - redis
+    networks:
+      - guardstack-network
+    restart: unless-stopped
+
+  # PostgreSQL with pgvector
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: guardstack-postgres
+    environment:
+      - POSTGRES_USER=guardstack
+      - POSTGRES_PASSWORD=guardstack
+      - POSTGRES_DB=guardstack
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - guardstack-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U guardstack -d guardstack"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: guardstack-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - guardstack-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO (S3-compatible storage)
+  minio:
+    image: minio/minio
+    container_name: guardstack-minio
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minio
+      - MINIO_ROOT_PASSWORD=minio123
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - guardstack-network
+    restart: unless-stopped
+
+  # MinIO Client (for bucket setup)
+  minio-setup:
+    image: minio/mc
+    container_name: guardstack-minio-setup
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      mc alias set guardstack http://minio:9000 minio minio123;
+      mc mb --ignore-existing guardstack/models;
+      mc mb --ignore-existing guardstack/evaluations;
+      mc mb --ignore-existing guardstack/reports;
+      mc mb --ignore-existing guardstack/artifacts;
+      exit 0;
+      "
+    networks:
+      - guardstack-network
+
+  # Prometheus (Metrics)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: guardstack-prometheus
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - guardstack-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  # Grafana (Visualization)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: guardstack-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    networks:
+      - guardstack-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+networks:
+  guardstack-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:

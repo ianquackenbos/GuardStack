@@ -1,0 +1,55 @@
+apiVersion: v2
+name: guardstack
+description: |
+  GuardStack - Open Source AI Safety & Security Platform
+  Enterprise-grade AI governance, risk assessment, and continuous monitoring
+  for Predictive AI, Generative AI, and AI Agents.
+
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+home: https://github.com/guardstack/guardstack
+sources:
+  - https://github.com/guardstack/guardstack
+
+keywords:
+  - ai-safety
+  - ai-security
+  - llm
+  - ml-ops
+  - guardrails
+  - ai-governance
+  - rancher
+  - kubernetes
+
+maintainers:
+  - name: GuardStack Team
+    email: team@guardstack.io
+
+icon: https://guardstack.io/logo.svg
+
+dependencies:
+  - name: postgresql
+    version: "~13.2"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  
+  - name: redis
+    version: "~18.0"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+  
+  - name: minio
+    version: "~12.0"
+    repository: https://charts.bitnami.com/bitnami
+    condition: minio.enabled
+  
+  - name: argo-workflows
+    version: "~0.36"
+    repository: https://argoproj.github.io/argo-helm
+    condition: argoWorkflows.enabled
+
+annotations:
+  category: AI/ML
+  licenses: Apache-2.0

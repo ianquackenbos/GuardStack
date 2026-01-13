@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "guardstack.fullname" . }}-config
+  labels:
+    {{- include "guardstack.labels" . | nindent 4 }}
+data:
+  # General Configuration
+  GUARDSTACK_CORS_ORIGINS: {{ .Values.api.corsOrigins | join "," | quote }}
+  GUARDSTACK_RATE_LIMIT_ENABLED: {{ .Values.api.rateLimit.enabled | quote }}
+  GUARDSTACK_RATE_LIMIT_REQUESTS_PER_MINUTE: {{ .Values.api.rateLimit.requestsPerMinute | quote }}
+  
+  # Evaluation Configuration
+  GUARDSTACK_EVALUATION_TIMEOUT: {{ .Values.evaluation.timeout | quote }}
+  GUARDSTACK_EVALUATION_MAX_CONCURRENT: {{ .Values.evaluation.maxConcurrent | quote }}
+  GUARDSTACK_EVALUATION_GPU_ENABLED: {{ .Values.evaluation.gpuEnabled | quote }}
+  
+  # Gen AI Configuration
+  GUARDSTACK_GENAI_ENABLED: {{ .Values.genai.enabled | quote }}
+  GUARDSTACK_GENAI_PRIVACY_ENABLED: {{ .Values.genai.pillars.privacy.enabled | quote }}
+  GUARDSTACK_GENAI_PRIVACY_CONFIDENCE_THRESHOLD: {{ .Values.genai.pillars.privacy.confidenceThreshold | quote }}
+  GUARDSTACK_GENAI_TOXICITY_ENABLED: {{ .Values.genai.pillars.toxicity.enabled | quote }}
+  GUARDSTACK_GENAI_TOXICITY_THRESHOLD: {{ .Values.genai.pillars.toxicity.threshold | quote }}
+  GUARDSTACK_GENAI_FAIRNESS_ENABLED: {{ .Values.genai.pillars.fairness.enabled | quote }}
+  GUARDSTACK_GENAI_SECURITY_ENABLED: {{ .Values.genai.pillars.security.enabled | quote }}
+  GUARDSTACK_GENAI_GARAK_PROBES: {{ .Values.genai.pillars.security.garakProbes | join "," | quote }}
+  
+  # Predictive AI Configuration
+  GUARDSTACK_PREDICTIVE_ENABLED: {{ .Values.predictive.enabled | quote }}
+  GUARDSTACK_PREDICTIVE_EXPLAIN_ENABLED: {{ .Values.predictive.pillars.explain.enabled | quote }}
+  GUARDSTACK_PREDICTIVE_SHAP_EXPLAINER: {{ .Values.predictive.pillars.explain.shapExplainer | quote }}
+  GUARDSTACK_PREDICTIVE_SHAP_SAMPLES: {{ .Values.predictive.pillars.explain.shapSamples | quote }}
+  GUARDSTACK_PREDICTIVE_ACTIONS_ENABLED: {{ .Values.predictive.pillars.actions.enabled | quote }}
+  GUARDSTACK_PREDICTIVE_FAIRNESS_ENABLED: {{ .Values.predictive.pillars.fairness.enabled | quote }}
+  GUARDSTACK_PREDICTIVE_ROBUSTNESS_ENABLED: {{ .Values.predictive.pillars.robustness.enabled | quote }}
+  GUARDSTACK_PREDICTIVE_ROBUSTNESS_ATTACKS: {{ .Values.predictive.pillars.robustness.attacks | join "," | quote }}
+  GUARDSTACK_PREDICTIVE_TRACE_ENABLED: {{ .Values.predictive.pillars.trace.enabled | quote }}
+  GUARDSTACK_PREDICTIVE_TESTING_ENABLED: {{ .Values.predictive.pillars.testing.enabled | quote }}
+  GUARDSTACK_PREDICTIVE_IMITATION_ENABLED: {{ .Values.predictive.pillars.imitation.enabled | quote }}
+  GUARDSTACK_PREDICTIVE_PRIVACY_ENABLED: {{ .Values.predictive.pillars.privacy.enabled | quote }}
+  
+  # SPM Configuration
+  GUARDSTACK_SPM_ENABLED: {{ .Values.spm.enabled | quote }}
+  GUARDSTACK_SPM_SCAN_INTERVAL: {{ .Values.spm.scanInterval | quote }}
+  GUARDSTACK_SPM_CONTINUOUS: {{ .Values.spm.continuous | quote }}
+  
+  # Agentic Configuration
+  GUARDSTACK_AGENTIC_ENABLED: {{ .Values.agentic.enabled | quote }}
+  GUARDSTACK_AGENTIC_INTERCEPTOR_ENABLED: {{ .Values.agentic.interceptor.enabled | quote }}
+  GUARDSTACK_AGENTIC_INTERCEPTOR_DEFAULT_ACTION: {{ .Values.agentic.interceptor.defaultAction | quote }}
+  GUARDSTACK_AGENTIC_SANDBOX_ENABLED: {{ .Values.agentic.sandbox.enabled | quote }}
+  GUARDSTACK_AGENTIC_SANDBOX_MEMORY_LIMIT_MB: {{ .Values.agentic.sandbox.memoryLimitMb | quote }}
+  GUARDSTACK_AGENTIC_SANDBOX_CPU_LIMIT: {{ .Values.agentic.sandbox.cpuLimit | quote }}
+  GUARDSTACK_AGENTIC_SANDBOX_TIMEOUT_SECONDS: {{ .Values.agentic.sandbox.timeoutSeconds | quote }}
+  
+  # Connector Configuration
+  GUARDSTACK_CONNECTOR_OPENAI_ENABLED: {{ .Values.connectors.openai.enabled | quote }}
+  GUARDSTACK_CONNECTOR_ANTHROPIC_ENABLED: {{ .Values.connectors.anthropic.enabled | quote }}
+  GUARDSTACK_CONNECTOR_OLLAMA_ENABLED: {{ .Values.connectors.ollama.enabled | quote }}
+  {{- if .Values.connectors.ollama.enabled }}
+  GUARDSTACK_CONNECTOR_OLLAMA_ENDPOINT: {{ .Values.connectors.ollama.endpoint | quote }}
+  {{- end }}
+  GUARDSTACK_CONNECTOR_HUGGINGFACE_ENABLED: {{ .Values.connectors.huggingface.enabled | quote }}
+  
+  # Monitoring Configuration
+  GUARDSTACK_PROMETHEUS_ENABLED: {{ .Values.monitoring.prometheus.enabled | quote }}
+  GUARDSTACK_OTEL_ENABLED: {{ .Values.monitoring.opentelemetry.enabled | quote }}
+  {{- if .Values.monitoring.opentelemetry.enabled }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.monitoring.opentelemetry.endpoint | quote }}
+  OTEL_SERVICE_NAME: {{ .Values.monitoring.opentelemetry.serviceName | quote }}
+  {{- end }}
+  GUARDSTACK_LOG_FORMAT: {{ .Values.monitoring.logging.format | quote }}

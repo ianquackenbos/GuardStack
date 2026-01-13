@@ -1,0 +1,90 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "guardstack.fullname" . }}-worker
+  labels:
+    {{- include "guardstack.worker.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "guardstack.worker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "guardstack.worker.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "guardstack.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: worker
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ include "guardstack.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - "python"
+            - "-m"
+            - "guardstack.worker"
+          env:
+            - name: GUARDSTACK_WORKER_CONCURRENCY
+              value: "{{ .Values.worker.concurrency }}"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "guardstack.fullname" . }}-secrets
+                  key: postgresql-password
+            - name: GUARDSTACK_DATABASE_URL
+              value: {{ include "guardstack.postgresql.connectionString" . }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "guardstack.fullname" . }}-secrets
+                  key: redis-password
+            - name: GUARDSTACK_REDIS_URL
+              value: {{ include "guardstack.redis.connectionString" . }}
+            - name: GUARDSTACK_S3_ENDPOINT
+              value: {{ include "guardstack.minio.endpoint" . }}
+            {{- if .Values.evaluation.gpuEnabled }}
+            - name: GUARDSTACK_GPU_ENABLED
+              value: "true"
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "guardstack.fullname" . }}-config
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /home/guardstack/.cache
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir:
+            sizeLimit: 10Gi
+        - name: models
+          emptyDir:
+            sizeLimit: 50Gi
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
