@@ -1,0 +1,52 @@
+# Worker Dockerfile
+# Celery worker container for GuardStack background tasks
+
+FROM python:3.11-slim
+
+LABEL maintainer="GuardStack Team"
+LABEL description="GuardStack Celery Worker for background task processing"
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    CELERY_BROKER_URL=redis://redis:6379/0 \
+    CELERY_RESULT_BACKEND=redis://redis:6379/0
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN groupadd -r guardstack && useradd -r -g guardstack guardstack
+
+# Set work directory
+WORKDIR /app
+
+# Copy requirements and install dependencies
+COPY requirements.txt requirements-worker.txt* ./
+RUN pip install --no-cache-dir -r requirements.txt && \
+    if [ -f requirements-worker.txt ]; then pip install --no-cache-dir -r requirements-worker.txt; fi
+
+# Copy application code
+COPY src/ ./src/
+
+# Set ownership
+RUN chown -R guardstack:guardstack /app
+
+# Switch to non-root user
+USER guardstack
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD celery -A src.guardstack.workers.celery_app inspect ping || exit 1
+
+# Default command - start Celery worker with all queues
+CMD ["celery", "-A", "src.guardstack.workers.celery_app", "worker", \
+     "--loglevel=INFO", \
+     "--concurrency=4", \
+     "-Q", "reports,evaluations,discovery,compliance,default"]

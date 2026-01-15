@@ -1,4 +1,4 @@
-"""GuardStack API Routers Package."""
+"""GuardStack API Package."""
 
 from guardstack.api.routers import (
     models,
@@ -7,6 +7,12 @@ from guardstack.api.routers import (
     compliance,
     guardrails,
     connectors,
+    websocket,
+    spm,
+    agentic,
+    reports,
+    workflows,
+    inventory,
 )
 
 __all__ = [
@@ -16,4 +22,10 @@ __all__ = [
     "compliance",
     "guardrails",
     "connectors",
+    "websocket",
+    "spm",
+    "agentic",
+    "reports",
+    "workflows",
+    "inventory",
 ]

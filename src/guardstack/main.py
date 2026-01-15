@@ -20,6 +20,11 @@ from guardstack.api.routers import (
     guardrails,
     connectors,
     websocket,
+    spm,
+    agentic,
+    reports,
+    workflows,
+    inventory,
 )
 from guardstack.config import settings
 
@@ -104,6 +109,33 @@ def create_app() -> FastAPI:
         connectors.router,
         prefix="/api/v1/connectors",
         tags=["connectors"],
+    )
+    
+    # New routers for AI-SPM, Agentic, Reports, Workflows, Inventory
+    app.include_router(
+        spm.router,
+        prefix="/api/v1/spm",
+        tags=["ai-spm"],
+    )
+    app.include_router(
+        agentic.router,
+        prefix="/api/v1/agentic",
+        tags=["agentic"],
+    )
+    app.include_router(
+        reports.router,
+        prefix="/api/v1/reports",
+        tags=["reports"],
+    )
+    app.include_router(
+        workflows.router,
+        prefix="/api/v1/workflows",
+        tags=["workflows"],
+    )
+    app.include_router(
+        inventory.router,
+        prefix="/api/v1/inventory",
+        tags=["inventory"],
     )
     
     # WebSocket router (no prefix, uses /ws)
