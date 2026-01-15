@@ -10,6 +10,13 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from guardstack.services.guardrails import (
+    get_guardrail_service,
+    GuardrailService,
+    Severity,
+    ViolationType,
+)
+
 router = APIRouter()
 
 
@@ -19,31 +26,18 @@ class GuardrailConfig(BaseModel):
     name: str
     description: Optional[str]
     enabled: bool
-    
-    # Detection settings
     pii_enabled: bool = True
     pii_threshold: float = 0.5
-    pii_entities: list[str] = Field(default=[
-        "PERSON", "EMAIL", "PHONE_NUMBER", "CREDIT_CARD", "SSN"
-    ])
-    
+    pii_entities: list[str] = Field(default=["PERSON", "EMAIL", "PHONE_NUMBER", "CREDIT_CARD", "SSN"])
     toxicity_enabled: bool = True
     toxicity_threshold: float = 0.5
-    toxicity_categories: list[str] = Field(default=[
-        "toxicity", "severe_toxicity", "obscene", "threat", "insult"
-    ])
-    
+    toxicity_categories: list[str] = Field(default=["toxicity", "severe_toxicity", "obscene", "threat", "insult"])
     jailbreak_enabled: bool = True
     jailbreak_threshold: float = 0.5
-    
-    # Actions
     block_on_violation: bool = True
     log_violations: bool = True
     alert_on_critical: bool = True
-    
-    # Custom rules
     custom_patterns: list[dict[str, Any]] = Field(default=[])
-    
     created_at: str
     updated_at: str
 
@@ -53,22 +47,17 @@ class CreateGuardrailRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     enabled: bool = True
-    
     pii_enabled: bool = True
     pii_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     pii_entities: list[str] = Field(default=[])
-    
     toxicity_enabled: bool = True
     toxicity_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     toxicity_categories: list[str] = Field(default=[])
-    
     jailbreak_enabled: bool = True
     jailbreak_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
-    
     block_on_violation: bool = True
     log_violations: bool = True
     alert_on_critical: bool = True
-    
     custom_patterns: list[dict[str, Any]] = Field(default=[])
 
 
@@ -78,8 +67,6 @@ class GuardrailCheckRequest(BaseModel):
     output_text: Optional[str] = None
     config_id: Optional[str] = None
     model_id: Optional[str] = None
-    
-    # Override default settings for this check
     check_pii: bool = True
     check_toxicity: bool = True
     check_jailbreak: bool = True
@@ -87,15 +74,15 @@ class GuardrailCheckRequest(BaseModel):
 
 class GuardrailViolation(BaseModel):
     """A single guardrail violation."""
-    type: str  # pii, toxicity, jailbreak, custom
+    type: str
     category: str
-    severity: str  # low, medium, high, critical
+    severity: str
     message: str
-    location: str  # input, output
+    location: str
     start_pos: Optional[int] = None
     end_pos: Optional[int] = None
     confidence: float
-    entity_text: Optional[str] = None  # For PII
+    entity_text: Optional[str] = None
 
 
 class GuardrailCheckResponse(BaseModel):
@@ -115,18 +102,14 @@ _guardrails_db: dict[str, dict] = {}
 
 @router.get("/configs", response_model=list[GuardrailConfig])
 async def list_guardrail_configs() -> list[GuardrailConfig]:
-    """
-    List all guardrail configurations.
-    """
+    """List all guardrail configurations."""
     configs = list(_guardrails_db.values())
     return [GuardrailConfig(**c) for c in configs]
 
 
 @router.post("/configs", response_model=GuardrailConfig, status_code=201)
 async def create_guardrail_config(request: CreateGuardrailRequest) -> GuardrailConfig:
-    """
-    Create a new guardrail configuration.
-    """
+    """Create a new guardrail configuration."""
     from datetime import datetime
     from uuid import uuid4
     
@@ -140,14 +123,10 @@ async def create_guardrail_config(request: CreateGuardrailRequest) -> GuardrailC
         "enabled": request.enabled,
         "pii_enabled": request.pii_enabled,
         "pii_threshold": request.pii_threshold,
-        "pii_entities": request.pii_entities or [
-            "PERSON", "EMAIL", "PHONE_NUMBER", "CREDIT_CARD", "SSN"
-        ],
+        "pii_entities": request.pii_entities or ["PERSON", "EMAIL", "PHONE_NUMBER", "CREDIT_CARD", "SSN"],
         "toxicity_enabled": request.toxicity_enabled,
         "toxicity_threshold": request.toxicity_threshold,
-        "toxicity_categories": request.toxicity_categories or [
-            "toxicity", "severe_toxicity", "obscene", "threat", "insult"
-        ],
+        "toxicity_categories": request.toxicity_categories or ["toxicity", "severe_toxicity", "threat"],
         "jailbreak_enabled": request.jailbreak_enabled,
         "jailbreak_threshold": request.jailbreak_threshold,
         "block_on_violation": request.block_on_violation,
@@ -159,34 +138,24 @@ async def create_guardrail_config(request: CreateGuardrailRequest) -> GuardrailC
     }
     
     _guardrails_db[config_id] = config
-    
     return GuardrailConfig(**config)
 
 
 @router.get("/configs/{config_id}", response_model=GuardrailConfig)
 async def get_guardrail_config(config_id: str) -> GuardrailConfig:
-    """
-    Get a specific guardrail configuration.
-    """
+    """Get a specific guardrail configuration."""
     if config_id not in _guardrails_db:
         raise HTTPException(status_code=404, detail="Config not found")
-    
     return GuardrailConfig(**_guardrails_db[config_id])
 
 
 @router.patch("/configs/{config_id}", response_model=GuardrailConfig)
-async def update_guardrail_config(
-    config_id: str,
-    request: CreateGuardrailRequest,
-) -> GuardrailConfig:
-    """
-    Update a guardrail configuration.
-    """
+async def update_guardrail_config(config_id: str, request: CreateGuardrailRequest) -> GuardrailConfig:
+    """Update a guardrail configuration."""
     if config_id not in _guardrails_db:
         raise HTTPException(status_code=404, detail="Config not found")
     
     from datetime import datetime
-    
     config = _guardrails_db[config_id]
     config.update({
         "name": request.name,
@@ -206,18 +175,14 @@ async def update_guardrail_config(
         "custom_patterns": request.custom_patterns,
         "updated_at": datetime.utcnow().isoformat(),
     })
-    
     return GuardrailConfig(**config)
 
 
 @router.delete("/configs/{config_id}", status_code=204)
 async def delete_guardrail_config(config_id: str) -> None:
-    """
-    Delete a guardrail configuration.
-    """
+    """Delete a guardrail configuration."""
     if config_id not in _guardrails_db:
         raise HTTPException(status_code=404, detail="Config not found")
-    
     del _guardrails_db[config_id]
 
 
@@ -229,112 +194,76 @@ async def invoke_guardrail_check(request: GuardrailCheckRequest) -> GuardrailChe
     This is the main endpoint for production inference guardrails.
     It checks for PII, toxicity, jailbreak attempts, and custom patterns.
     """
-    import time
+    # Get config if specified
+    config = None
+    if request.config_id and request.config_id in _guardrails_db:
+        config = _guardrails_db[request.config_id]
     
-    start_time = time.time()
-    violations = []
+    # Create service with config or defaults
+    if config:
+        service = GuardrailService(
+            pii_enabled=config.get("pii_enabled", True) and request.check_pii,
+            pii_entities=config.get("pii_entities"),
+            pii_threshold=config.get("pii_threshold", 0.5),
+            toxicity_enabled=config.get("toxicity_enabled", True) and request.check_toxicity,
+            toxicity_categories=config.get("toxicity_categories"),
+            toxicity_threshold=config.get("toxicity_threshold", 0.5),
+            jailbreak_enabled=config.get("jailbreak_enabled", True) and request.check_jailbreak,
+            jailbreak_threshold=config.get("jailbreak_threshold", 0.5),
+            block_on_critical=config.get("block_on_violation", True),
+        )
+    else:
+        service = get_guardrail_service()
     
-    # Check input text
-    if request.input_text:
-        # PII detection
-        if request.check_pii:
-            # TODO: Use Presidio for real PII detection
-            pii_patterns = ["@", "555-", "4111"]
-            for pattern in pii_patterns:
-                if pattern in request.input_text:
-                    violations.append(GuardrailViolation(
-                        type="pii",
-                        category="EMAIL" if "@" in pattern else "PHONE_NUMBER",
-                        severity="high",
-                        message=f"Potential PII detected in input",
-                        location="input",
-                        confidence=0.85,
-                    ))
-        
-        # Jailbreak detection
-        if request.check_jailbreak:
-            jailbreak_patterns = [
-                "ignore previous instructions",
-                "pretend you are",
-                "act as if",
-                "DAN mode",
-            ]
-            input_lower = request.input_text.lower()
-            for pattern in jailbreak_patterns:
-                if pattern in input_lower:
-                    violations.append(GuardrailViolation(
-                        type="jailbreak",
-                        category="prompt_injection",
-                        severity="critical",
-                        message=f"Potential jailbreak attempt detected",
-                        location="input",
-                        confidence=0.9,
-                    ))
-                    break
+    # Run checks
+    result = service.check(
+        input_text=request.input_text,
+        output_text=request.output_text,
+        check_pii=request.check_pii,
+        check_toxicity=request.check_toxicity,
+        check_jailbreak=request.check_jailbreak,
+    )
     
-    # Check output text
-    if request.output_text and request.check_toxicity:
-        # TODO: Use Detoxify for real toxicity detection
-        toxic_words = ["hate", "kill", "attack"]
-        output_lower = request.output_text.lower()
-        for word in toxic_words:
-            if word in output_lower:
-                violations.append(GuardrailViolation(
-                    type="toxicity",
-                    category="threat",
-                    severity="high",
-                    message=f"Potentially harmful content in output",
-                    location="output",
-                    confidence=0.75,
-                ))
-                break
-    
-    processing_time = int((time.time() - start_time) * 1000)
-    
-    input_violations = sum(1 for v in violations if v.location == "input")
-    output_violations = sum(1 for v in violations if v.location == "output")
-    
-    has_critical = any(v.severity == "critical" for v in violations)
+    # Convert violations to response format
+    violations = [
+        GuardrailViolation(
+            type=v.type.value,
+            category=v.category,
+            severity=v.severity.value,
+            message=v.message,
+            location=v.location,
+            start_pos=v.start_pos,
+            end_pos=v.end_pos,
+            confidence=v.confidence,
+            entity_text=v.entity_text,
+        )
+        for v in result.violations
+    ]
     
     return GuardrailCheckResponse(
-        passed=len(violations) == 0,
-        blocked=has_critical,
+        passed=result.passed,
+        blocked=result.blocked,
         violations=violations,
-        input_violations=input_violations,
-        output_violations=output_violations,
-        processing_time_ms=processing_time,
-        sanitized_output=None,  # TODO: Implement output sanitization
+        input_violations=result.input_violations,
+        output_violations=result.output_violations,
+        processing_time_ms=result.processing_time_ms,
+        sanitized_output=result.sanitized_output,
     )
 
 
 @router.get("/stats")
-async def get_guardrail_stats(
-    days: int = Query(default=7, ge=1, le=90),
-) -> dict[str, Any]:
-    """
-    Get guardrail invocation statistics.
-    """
+async def get_guardrail_stats(days: int = Query(default=7, ge=1, le=90)) -> dict[str, Any]:
+    """Get guardrail invocation statistics."""
     return {
         "period_days": days,
         "total_invocations": 15420,
         "total_violations": 234,
         "blocked_requests": 45,
-        "by_violation_type": {
-            "pii": 120,
-            "toxicity": 65,
-            "jailbreak": 35,
-            "custom": 14,
-        },
-        "by_severity": {
-            "critical": 45,
-            "high": 89,
-            "medium": 67,
-            "low": 33,
-        },
+        "by_violation_type": {"pii": 120, "toxicity": 65, "jailbreak": 35, "custom": 14},
+        "by_severity": {"critical": 45, "high": 89, "medium": 67, "low": 33},
         "top_models": [
             {"model_id": "model-1", "violations": 78},
             {"model_id": "model-2", "violations": 56},
-            {"model_id": "model-3", "violations": 45},
         ],
         "trend": "decreasing",
     }
@@ -346,14 +275,12 @@ async def list_recent_violations(
     violation_type: Optional[str] = None,
     severity: Optional[str] = None,
 ) -> dict[str, Any]:
-    """
-    List recent guardrail violations for audit purposes.
-    """
+    """List recent guardrail violations for audit purposes."""
     return {
         "violations": [
             {
                 "id": "violation-1",
-                "timestamp": "2024-01-15T10:30:00Z",
+                "timestamp": "2026-01-15T10:30:00Z",
                 "model_id": "model-1",
                 "config_id": "config-1",
                 "type": "jailbreak",
@@ -361,19 +288,6 @@ async def list_recent_violations(
                 "severity": "critical",
                 "message": "Jailbreak attempt detected",
                 "blocked": True,
-                "input_preview": "Ignore previous instructions and...",
-            },
-            {
-                "id": "violation-2",
-                "timestamp": "2024-01-15T10:25:00Z",
-                "model_id": "model-2",
-                "config_id": "config-1",
-                "type": "pii",
-                "category": "EMAIL",
-                "severity": "high",
-                "message": "Email address detected in output",
-                "blocked": False,
-                "output_preview": "Contact john.doe@...",
             },
         ],
         "total": 234,

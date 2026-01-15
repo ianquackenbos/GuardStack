@@ -4,10 +4,13 @@ Connectors API Router
 Endpoints for managing model provider connections.
 """
 
+from datetime import datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
+
+from guardstack.services.connectors import get_connector_service
 
 router = APIRouter()
 
@@ -35,6 +38,7 @@ class ConnectorTestResponse(BaseModel):
     message: str
     latency_ms: Optional[int]
     available_models: list[str]
+    error: Optional[str] = None
 
 
 # Available connectors
@@ -60,28 +64,6 @@ CONNECTORS = {
         optional_config=["base_url"],
         documentation_url="https://docs.anthropic.com",
     ),
-    "cohere": ConnectorInfo(
-        type="cohere",
-        name="Cohere",
-        description="Connect to Cohere Command models",
-        category="llm_provider",
-        supported_model_types=["genai"],
-        required_config=["api_key"],
-        optional_config=[],
-        documentation_url="https://docs.cohere.com",
-    ),
-    "mistral": ConnectorInfo(
-        type="mistral",
-        name="Mistral AI",
-        description="Connect to Mistral AI models",
-        category="llm_provider",
-        supported_model_types=["genai"],
-        required_config=["api_key"],
-        optional_config=["endpoint"],
-        documentation_url="https://docs.mistral.ai",
-    ),
-    
-    # Local Inference
     "ollama": ConnectorInfo(
         type="ollama",
         name="Ollama",
@@ -92,60 +74,6 @@ CONNECTORS = {
         optional_config=["timeout"],
         documentation_url="https://ollama.ai/docs",
     ),
-    "lmstudio": ConnectorInfo(
-        type="lmstudio",
-        name="LM Studio",
-        description="Connect to LM Studio local server",
-        category="local",
-        supported_model_types=["genai"],
-        required_config=["endpoint"],
-        optional_config=[],
-        documentation_url="https://lmstudio.ai/docs",
-    ),
-    "vllm": ConnectorInfo(
-        type="vllm",
-        name="vLLM",
-        description="Connect to vLLM inference server",
-        category="local",
-        supported_model_types=["genai"],
-        required_config=["endpoint"],
-        optional_config=["api_key"],
-        documentation_url="https://docs.vllm.ai",
-    ),
-    
-    # Cloud Providers
-    "azure_openai": ConnectorInfo(
-        type="azure_openai",
-        name="Azure OpenAI",
-        description="Connect to Azure OpenAI Service",
-        category="cloud",
-        supported_model_types=["genai"],
-        required_config=["api_key", "endpoint", "deployment_name", "api_version"],
-        optional_config=[],
-        documentation_url="https://learn.microsoft.com/azure/ai-services/openai",
-    ),
-    "aws_bedrock": ConnectorInfo(
-        type="aws_bedrock",
-        name="AWS Bedrock",
-        description="Connect to Amazon Bedrock models",
-        category="cloud",
-        supported_model_types=["genai"],
-        required_config=["aws_access_key", "aws_secret_key", "region"],
-        optional_config=["profile"],
-        documentation_url="https://docs.aws.amazon.com/bedrock",
-    ),
-    "gcp_vertex": ConnectorInfo(
-        type="gcp_vertex",
-        name="Google Vertex AI",
-        description="Connect to Google Vertex AI models",
-        category="cloud",
-        supported_model_types=["genai"],
-        required_config=["project_id", "location"],
-        optional_config=["credentials_path"],
-        documentation_url="https://cloud.google.com/vertex-ai/docs",
-    ),
-    
-    # ML Platforms
     "huggingface": ConnectorInfo(
         type="huggingface",
         name="Hugging Face",
@@ -156,60 +84,6 @@ CONNECTORS = {
         optional_config=["model_id", "endpoint"],
         documentation_url="https://huggingface.co/docs",
     ),
-    "databricks": ConnectorInfo(
-        type="databricks",
-        name="Databricks",
-        description="Connect to Databricks Model Serving",
-        category="ml_platform",
-        supported_model_types=["genai", "predictive"],
-        required_config=["host", "token"],
-        optional_config=["cluster_id"],
-        documentation_url="https://docs.databricks.com",
-    ),
-    
-    # Predictive AI
-    "sklearn": ConnectorInfo(
-        type="sklearn",
-        name="Scikit-learn",
-        description="Load scikit-learn models from file or MLflow",
-        category="ml_platform",
-        supported_model_types=["predictive"],
-        required_config=["model_path"],
-        optional_config=["mlflow_tracking_uri"],
-        documentation_url="https://scikit-learn.org/stable",
-    ),
-    "pytorch": ConnectorInfo(
-        type="pytorch",
-        name="PyTorch",
-        description="Load PyTorch models",
-        category="ml_platform",
-        supported_model_types=["predictive", "genai"],
-        required_config=["model_path"],
-        optional_config=["device", "dtype"],
-        documentation_url="https://pytorch.org/docs",
-    ),
-    "tensorflow": ConnectorInfo(
-        type="tensorflow",
-        name="TensorFlow",
-        description="Load TensorFlow/Keras models",
-        category="ml_platform",
-        supported_model_types=["predictive"],
-        required_config=["model_path"],
-        optional_config=["signature"],
-        documentation_url="https://tensorflow.org/guide",
-    ),
-    "onnx": ConnectorInfo(
-        type="onnx",
-        name="ONNX Runtime",
-        description="Load ONNX format models",
-        category="ml_platform",
-        supported_model_types=["predictive"],
-        required_config=["model_path"],
-        optional_config=["providers"],
-        documentation_url="https://onnxruntime.ai/docs",
-    ),
-    
-    # Custom
     "custom": ConnectorInfo(
         type="custom",
         name="Custom Endpoint",
@@ -228,31 +102,20 @@ async def list_connectors(
     category: Optional[str] = Query(default=None),
     model_type: Optional[str] = Query(default=None),
 ) -> list[ConnectorInfo]:
-    """
-    List available connector types.
-    
-    Can filter by category (cloud, llm_provider, local, ml_platform)
-    or by supported model type (genai, predictive, agentic).
-    """
+    """List available connector types."""
     connectors = list(CONNECTORS.values())
-    
     if category:
         connectors = [c for c in connectors if c.category == category]
-    
     if model_type:
         connectors = [c for c in connectors if model_type in c.supported_model_types]
-    
     return connectors
 
 
 @router.get("/{connector_type}", response_model=ConnectorInfo)
 async def get_connector_info(connector_type: str) -> ConnectorInfo:
-    """
-    Get detailed information about a connector type.
-    """
+    """Get detailed information about a connector type."""
     if connector_type not in CONNECTORS:
         raise HTTPException(status_code=404, detail="Connector type not found")
-    
     return CONNECTORS[connector_type]
 
 
@@ -261,126 +124,76 @@ async def test_connector(
     connector_type: str,
     request: ConnectorTestRequest,
 ) -> ConnectorTestResponse:
-    """
-    Test a connector configuration.
-    
-    Validates credentials and returns available models.
-    """
+    """Test a connector configuration."""
     if connector_type not in CONNECTORS:
         raise HTTPException(status_code=404, detail="Connector type not found")
     
     connector_info = CONNECTORS[connector_type]
-    
-    # Validate required config
-    missing = [
-        field for field in connector_info.required_config 
-        if field not in request.config
-    ]
+    missing = [f for f in connector_info.required_config if f not in request.config]
     if missing:
         return ConnectorTestResponse(
             success=False,
             message=f"Missing required configuration: {', '.join(missing)}",
             latency_ms=None,
             available_models=[],
+            error=f"Missing fields: {', '.join(missing)}",
         )
     
-    # TODO: Actually test the connection
-    # For now, return mock success
-    
-    import time
-    start = time.time()
-    
-    # Simulate connection test
-    import asyncio
-    await asyncio.sleep(0.1)
-    
-    latency = int((time.time() - start) * 1000)
-    
-    # Mock available models based on connector type
-    mock_models = {
-        "openai": ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"],
-        "anthropic": ["claude-3-opus", "claude-3-sonnet", "claude-3-haiku"],
-        "ollama": ["llama2", "mistral", "codellama"],
-        "huggingface": ["meta-llama/Llama-2-7b", "mistralai/Mistral-7B"],
-    }
+    connector_service = get_connector_service()
+    result = await connector_service.test_connector(connector_type, request.config)
     
     return ConnectorTestResponse(
-        success=True,
-        message="Connection successful",
-        latency_ms=latency,
-        available_models=mock_models.get(connector_type, ["default-model"]),
+        success=result.success,
+        message=result.message,
+        latency_ms=result.latency_ms,
+        available_models=result.available_models,
+        error=result.error,
     )
 
 
 @router.get("/{connector_type}/models")
 async def list_available_models(
     connector_type: str,
-    config: dict[str, Any] = None,
+    api_key: Optional[str] = Query(default=None),
+    endpoint: Optional[str] = Query(default=None),
 ) -> dict[str, Any]:
-    """
-    List models available through a connector.
-    
-    Requires valid connector configuration.
-    """
+    """List models available through a connector."""
     if connector_type not in CONNECTORS:
         raise HTTPException(status_code=404, detail="Connector type not found")
     
-    # TODO: Actually query the connector for available models
+    config: dict[str, Any] = {}
+    if api_key:
+        config["api_key"] = api_key
+    if endpoint:
+        config["endpoint"] = endpoint
     
-    mock_models = {
-        "openai": [
-            {"id": "gpt-4", "name": "GPT-4", "context_window": 8192},
-            {"id": "gpt-4-turbo", "name": "GPT-4 Turbo", "context_window": 128000},
-            {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "context_window": 16385},
-        ],
-        "anthropic": [
-            {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "context_window": 200000},
-            {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet", "context_window": 200000},
-            {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku", "context_window": 200000},
-        ],
-        "ollama": [
-            {"id": "llama2", "name": "Llama 2", "context_window": 4096},
-            {"id": "mistral", "name": "Mistral 7B", "context_window": 8192},
-            {"id": "codellama", "name": "Code Llama", "context_window": 16384},
-        ],
-    }
+    connector_service = get_connector_service()
+    models = await connector_service.list_models(connector_type, config)
     
-    return {
-        "connector_type": connector_type,
-        "models": mock_models.get(connector_type, []),
-    }
+    return {"connector_type": connector_type, "models": models}
 
 
 @router.get("/health")
 async def check_connectors_health() -> dict[str, Any]:
-    """
-    Check health of all configured connectors.
-    """
-    # TODO: Check actual connector health
+    """Check health of all configured connectors."""
+    connector_service = get_connector_service()
+    
+    configured_connectors = [
+        ("ollama", {"endpoint": "http://localhost:11434"}),
+    ]
+    
+    health_statuses = await connector_service.check_all_health(configured_connectors)
+    
+    healthy_count = sum(1 for s in health_statuses if s.status == "healthy")
+    degraded_count = sum(1 for s in health_statuses if s.status == "degraded")
+    unhealthy_count = sum(1 for s in health_statuses if s.status == "unhealthy")
     
     return {
         "connectors": [
-            {
-                "type": "openai",
-                "status": "healthy",
-                "latency_ms": 45,
-                "last_checked": "2024-01-15T10:00:00Z",
-            },
-            {
-                "type": "ollama",
-                "status": "healthy",
-                "latency_ms": 12,
-                "last_checked": "2024-01-15T10:00:00Z",
-            },
-            {
-                "type": "anthropic",
-                "status": "degraded",
-                "latency_ms": 350,
-                "last_checked": "2024-01-15T10:00:00Z",
-                "message": "High latency detected",
-            },
+            {"type": s.type, "status": s.status, "latency_ms": s.latency_ms, "last_checked": s.last_checked, "message": s.message}
+            for s in health_statuses
         ],
-        "healthy_count": 2,
-        "degraded_count": 1,
-        "unhealthy_count": 0,
+        "healthy_count": healthy_count,
+        "degraded_count": degraded_count,
+        "unhealthy_count": unhealthy_count,
     }

@@ -4,13 +4,18 @@ Models API Router
 Endpoints for registering and managing AI models.
 """
 
+from datetime import datetime
 from typing import Any, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from guardstack.models.core import ModelType, RiskStatus
+from guardstack.services.argo import (
+    get_evaluation_workflow_service,
+    EvaluationWorkflowService,
+)
 
 router = APIRouter()
 
@@ -63,6 +68,12 @@ class ModelsListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class StartEvaluationRequest(BaseModel):
+    """Request to start an evaluation."""
+    pillars: Optional[list[str]] = None
+    config: Optional[dict[str, Any]] = None
 
 
 # In-memory storage for demo (replace with database)
@@ -120,9 +131,6 @@ async def create_model(request: CreateModelRequest) -> ModelResponse:
     Creates a new model entry in the registry with the specified
     connector configuration.
     """
-    from datetime import datetime
-    from uuid import uuid4
-    
     model_id = uuid4()
     now = datetime.utcnow().isoformat()
     
@@ -204,32 +212,93 @@ async def delete_model(model_id: UUID) -> None:
 async def start_evaluation(
     model_id: UUID,
     evaluation_type: str = Query(..., pattern="^(predictive|genai|spm|agentic)$"),
-    config: Optional[dict[str, Any]] = None,
+    request: Optional[StartEvaluationRequest] = None,
 ) -> dict[str, Any]:
     """
     Start an evaluation workflow for a model.
     
     Triggers an Argo Workflow to evaluate the model based on
     the specified evaluation type (predictive, genai, spm, agentic).
+    
+    The workflow runs as a Kubernetes-native DAG with parallel pillar evaluation.
     """
     if model_id not in _models_db:
         raise HTTPException(status_code=404, detail="Model not found")
     
-    from datetime import datetime
-    from uuid import uuid4
+    model = _models_db[model_id]
     
-    # Create evaluation record
-    evaluation_id = uuid4()
-    workflow_name = f"eval-{evaluation_type}-{evaluation_id.hex[:8]}"
+    # Get evaluation service
+    eval_service = get_evaluation_workflow_service()
     
-    # TODO: Submit Argo Workflow
-    # workflow = await argo_client.submit_workflow(...)
+    # Prepare config
+    config = request.config if request else {}
+    pillars = request.pillars if request else None
     
-    return {
-        "evaluation_id": str(evaluation_id),
-        "model_id": str(model_id),
-        "evaluation_type": evaluation_type,
-        "workflow_name": workflow_name,
-        "status": "pending",
-        "created_at": datetime.utcnow().isoformat(),
-    }
+    # Add model connector info to config
+    config["connector_type"] = model.get("connector_type")
+    config["connector_config"] = model.get("connector_config", {})
+    
+    try:
+        # Submit Argo Workflow
+        workflow_status = await eval_service.submit_evaluation(
+            model_id=str(model_id),
+            evaluation_type=evaluation_type,
+            config=config,
+            pillars=pillars,
+        )
+        
+        # Update model last_evaluated
+        model["last_evaluated"] = datetime.utcnow().isoformat()
+        
+        return {
+            "evaluation_id": workflow_status.workflow_name,
+            "model_id": str(model_id),
+            "model_name": model["name"],
+            "evaluation_type": evaluation_type,
+            "workflow_name": workflow_status.workflow_name,
+            "workflow_namespace": workflow_status.namespace,
+            "status": workflow_status.phase.lower(),
+            "pillars": pillars or eval_service._get_default_pillars(evaluation_type),
+            "created_at": datetime.utcnow().isoformat(),
+            "message": "Evaluation workflow submitted to Argo",
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to submit evaluation workflow: {str(e)}"
+        )
+
+
+@router.get("/{model_id}/evaluations")
+async def list_model_evaluations(
+    model_id: UUID,
+    limit: int = Query(default=10, ge=1, le=100),
+) -> dict[str, Any]:
+    """
+    List recent evaluations for a model.
+    """
+    if model_id not in _models_db:
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    # Get evaluation workflow service to query Argo
+    eval_service = get_evaluation_workflow_service()
+    
+    try:
+        evaluations = await eval_service.list_model_evaluations(
+            model_id=str(model_id),
+            limit=limit,
+        )
+        
+        return {
+            "model_id": str(model_id),
+            "evaluations": evaluations,
+            "total": len(evaluations),
+        }
+    except Exception as e:
+        # Return empty list if Argo unavailable
+        return {
+            "model_id": str(model_id),
+            "evaluations": [],
+            "total": 0,
+            "error": str(e),
+        }

@@ -8,6 +8,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -55,6 +56,63 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Shutting down GuardStack API server...")
     # await close_db()
     # await close_redis()
+
+
+async def check_postgres() -> tuple[bool, str]:
+    """Check PostgreSQL database connectivity."""
+    try:
+        import asyncpg
+        conn = await asyncpg.connect(
+            host=settings.database_host,
+            port=settings.database_port,
+            user=settings.database_user,
+            password=settings.database_password,
+            database=settings.database_name,
+            timeout=5.0,
+        )
+        await conn.fetchval("SELECT 1")
+        await conn.close()
+        return True, "connected"
+    except ImportError:
+        # asyncpg not installed, skip check
+        return True, "skipped (asyncpg not installed)"
+    except Exception as e:
+        logger.warning(f"Database health check failed: {e}")
+        return False, str(e)
+
+
+async def check_redis() -> tuple[bool, str]:
+    """Check Redis connectivity."""
+    try:
+        import redis.asyncio as aioredis
+        client = aioredis.Redis(
+            host=settings.redis_host,
+            port=settings.redis_port,
+            password=settings.redis_password,
+            decode_responses=True,
+        )
+        await client.ping()
+        await client.aclose()
+        return True, "connected"
+    except ImportError:
+        return True, "skipped (redis not installed)"
+    except Exception as e:
+        logger.warning(f"Redis health check failed: {e}")
+        return False, str(e)
+
+
+async def check_argo() -> tuple[bool, str]:
+    """Check Argo Workflows server connectivity."""
+    try:
+        argo_url = getattr(settings, "argo_server_url", "http://argo-server:2746")
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{argo_url}/api/v1/version")
+            if response.status_code == 200:
+                return True, "connected"
+            return False, f"status {response.status_code}"
+    except Exception as e:
+        logger.warning(f"Argo health check failed: {e}")
+        return False, str(e)
 
 
 def create_app() -> FastAPI:
@@ -146,7 +204,7 @@ def create_app() -> FastAPI:
     
     @app.get("/health", tags=["health"])
     async def health_check() -> JSONResponse:
-        """Health check endpoint for Kubernetes probes."""
+        """Health check endpoint for Kubernetes liveness probes."""
         return JSONResponse(
             content={
                 "status": "healthy",
@@ -156,15 +214,28 @@ def create_app() -> FastAPI:
     
     @app.get("/ready", tags=["health"])
     async def readiness_check() -> JSONResponse:
-        """Readiness check endpoint for Kubernetes probes."""
-        # TODO: Check database and Redis connectivity
+        """
+        Readiness check endpoint for Kubernetes readiness probes.
+        
+        Checks connectivity to all backend services:
+        - PostgreSQL database
+        - Redis cache
+        - Argo Workflows server
+        """
+        db_ok, db_msg = await check_postgres()
+        redis_ok, redis_msg = await check_redis()
+        argo_ok, argo_msg = await check_argo()
+        
+        all_ok = db_ok and redis_ok and argo_ok
+        
         return JSONResponse(
+            status_code=200 if all_ok else 503,
             content={
-                "status": "ready",
+                "status": "ready" if all_ok else "degraded",
                 "checks": {
-                    "database": "ok",
-                    "redis": "ok",
-                    "argo": "ok",
+                    "database": {"status": "ok" if db_ok else "error", "message": db_msg},
+                    "redis": {"status": "ok" if redis_ok else "error", "message": redis_msg},
+                    "argo": {"status": "ok" if argo_ok else "error", "message": argo_msg},
                 }
             }
         )
